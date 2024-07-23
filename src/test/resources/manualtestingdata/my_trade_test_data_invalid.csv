@@ -1,0 +1,5 @@
+date,product_id,currency,price
+20240101,1,USD,15.0
+20240101,2,,25.1
+20240101,,USD,35.34
+,11,USD,45.34
