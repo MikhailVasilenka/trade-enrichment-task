@@ -125,7 +125,6 @@ public class TradeEnrichmentServiceImpl implements TradeEnrichmentService {
                 .append(productName).append(',')
                 .append(currency).append(',')
                 .append(price);
-        //                .append('\n');
         return sb.toString();
     }
 
