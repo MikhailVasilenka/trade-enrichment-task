@@ -9,27 +9,30 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.csv.CSVParser;
 import org.apache.commons.csv.CSVRecord;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
 
+import java.io.BufferedReader;
+import java.io.BufferedWriter;
 import java.io.IOException;
 import java.io.InputStreamReader;
-import java.io.Reader;
+import java.io.OutputStream;
+import java.io.OutputStreamWriter;
+import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
-import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.List;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.Objects;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Future;
+import java.util.concurrent.ForkJoinPool;
 import java.util.stream.Collectors;
 
 import static com.verygoodbank.tes.exception.ResponseErrorCode.READING_TRADE_DATA_ERROR;
-import static com.verygoodbank.tes.exception.ResponseErrorCode.TRADE_LINE_PROCESSING_ERROR;
 import static com.verygoodbank.tes.util.TradeCsvUtils.TRADE_CSV_FORMAT;
 
 @Slf4j
@@ -41,52 +44,37 @@ public class TradeEnrichmentServiceImpl implements TradeEnrichmentService {
     private final ExecutorService executorService;
 
     private static final DateTimeFormatter DATE_FORMATTER = DateTimeFormatter.ofPattern("yyyyMMdd");
-
-    @Value("${batch-size}")
-    private int batchSize;
+    private final Map<String, Boolean> dateCache = new HashMap<>();
 
     @Override
-    public List<String> enrichTradeData(final MultipartFile file) {
-        List<String> enrichedTrades = new ArrayList<>();
-        enrichedTrades.add(getResponseHeader());
+    public void enrichTradeData(final MultipartFile file, OutputStream outputStream) {
+        try (BufferedReader reader = new BufferedReader(new InputStreamReader(file.getInputStream(), StandardCharsets.UTF_8));
+             CSVParser csvParser = new CSVParser(reader, TRADE_CSV_FORMAT);
+             BufferedWriter writer = new BufferedWriter(new OutputStreamWriter(outputStream, StandardCharsets.UTF_8))) {
 
-        try (Reader reader = new InputStreamReader(file.getInputStream(), StandardCharsets.UTF_8);
-             CSVParser csvParser = new CSVParser(reader, TRADE_CSV_FORMAT)) {
+            writer.write(getResponseHeader());
+            writer.newLine();
 
-            List<CSVRecord> batch = new ArrayList<>(batchSize);
-            for (CSVRecord csvRecord : csvParser) {
-                batch.add(csvRecord);
-                if (batch.size() == batchSize) {
-                    processBatch(batch, enrichedTrades);
-                    batch.clear();
-                }
-            }
-            if (!batch.isEmpty()) {
-                processBatch(batch, enrichedTrades);
-            }
-        } catch (IOException e) {
-            log.error("Error reading trade data: {}", e.getMessage());
+            ForkJoinPool customThreadPool = new ForkJoinPool(Runtime.getRuntime().availableProcessors());
+            customThreadPool.submit(() ->
+                    csvParser.stream()
+                            .parallel()
+                            .map(this::enrichTradeLine)
+                            .filter(Objects::nonNull)
+                            .forEachOrdered(line -> {
+                                try {
+                                    writer.write(line);
+                                    writer.newLine();
+                                } catch (IOException e) {
+                                    throw new UncheckedIOException(e);
+                                }
+                            })
+            ).get();
+
+            writer.flush();
+        } catch (IOException | InterruptedException | ExecutionException e) {
+            log.error("Error processing trade data: {}", e.getMessage());
             throw new InternalServerError(READING_TRADE_DATA_ERROR);
-        }
-        return enrichedTrades;
-    }
-
-    private void processBatch(final List<CSVRecord> batch, final List<String> enrichedTrades) {
-        List<Future<String>> futures = batch.stream()
-                .map(csvRecord -> executorService.submit(() -> enrichTradeLine(csvRecord)))
-                .toList();
-
-        for (Future<String> future : futures) {
-            try {
-                String enrichedLine = future.get();
-                if (enrichedLine != null) {
-                    enrichedTrades.add(enrichedLine);
-                }
-            } catch (InterruptedException | ExecutionException e) {
-                Thread.currentThread().interrupt();
-                log.error("Error processing trade line: {}", e.getMessage());
-                throw new InternalServerError(TRADE_LINE_PROCESSING_ERROR);
-            }
         }
     }
 
@@ -107,20 +95,38 @@ public class TradeEnrichmentServiceImpl implements TradeEnrichmentService {
                 log.error("Missing product mapping for ID: {}", productId);
             }
 
-            return String.join(",", date, productId, productName, currency, price);
+            return buildCsvLine(date, productId, productName, currency, price);
         } catch (IllegalArgumentException e) {
             System.err.println("Invalid CSV record: " + e.getMessage());
             return null;
         }
     }
 
-    private boolean isValidDate(String date) {
+    public boolean isValidDate(String date) {
+        Boolean cachedResult = dateCache.get(date);
+        if (cachedResult != null) {
+            return cachedResult;
+        }
+        boolean isValid;
         try {
             LocalDate.parse(date, DATE_FORMATTER);
-            return true;
+            isValid = true;
         } catch (DateTimeParseException e) {
-            return false;
+            isValid = false;
         }
+        dateCache.put(date, isValid);
+        return isValid;
+    }
+
+    private String buildCsvLine(String date, String productId, String productName, String currency, String price) {
+        final StringBuilder sb = new StringBuilder();
+        sb.append(date).append(',')
+                .append(productId).append(',')
+                .append(productName).append(',')
+                .append(currency).append(',')
+                .append(price);
+        //                .append('\n');
+        return sb.toString();
     }
 
     private String getResponseHeader() {

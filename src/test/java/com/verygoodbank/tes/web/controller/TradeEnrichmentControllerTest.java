@@ -1,24 +1,28 @@
 package com.verygoodbank.tes.web.controller;
 
 import com.verygoodbank.tes.service.TradeEnrichmentService;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
-import org.springframework.web.multipart.MultipartFile;
 
-import java.util.List;
+import java.io.OutputStream;
 
-import static org.hamcrest.Matchers.containsString;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 @ExtendWith(MockitoExtension.class)
@@ -32,34 +36,61 @@ class TradeEnrichmentControllerTest {
     @InjectMocks
     private TradeEnrichmentController tradeEnrichmentController;
 
+    @BeforeEach
+    void setUp() {
+        mockMvc = MockMvcBuilders.standaloneSetup(tradeEnrichmentController).build();
+    }
+
     @Test
     void givenValidFile_whenEnrichTradeData_thenReturnsEnrichedTrades() throws Exception {
         // given
-        mockMvc = MockMvcBuilders.standaloneSetup(tradeEnrichmentController).build();
-        final MockMultipartFile file = new MockMultipartFile("file", "tradeData.csv", "text/csv", "sample,data".getBytes());
+        final MockMultipartFile file = new MockMultipartFile("file", "tradeData.csv",
+                "text/csv", "sample,data".getBytes());
 
-        when(tradeEnrichmentService.enrichTradeData(any(MultipartFile.class)))
-                .thenReturn(List.of("20160101,1,Treasury Bills Domestic,EUR,10.0"));
+        doAnswer(invocation -> {
+            OutputStream outputStream = (OutputStream) invocation.getArguments()[1];
+            outputStream.write("date,product_id,product_name,currency,price\n".getBytes());
+            outputStream.write("20240101,1,Treasury Bills Domestic,EUR,10.0".getBytes());
+            return null;
+        }).when(tradeEnrichmentService).enrichTradeData(any(), any());
 
         // when & then
         mockMvc.perform(multipart("/api/v1/enrich")
                         .file(file)
                         .contentType(MediaType.MULTIPART_FORM_DATA))
                 .andExpect(status().isOk())
-                .andExpect(content().string(containsString("20160101,1,Treasury Bills Domestic,EUR,10.0")));
+                .andExpect(header().string(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=enriched_trades.csv"))
+                .andExpect(content().contentType("text/csv"))
+                .andExpect(content().string("date,product_id,product_name,currency,price\n20240101,1,Treasury Bills Domestic,EUR,10.0"));
+
+        verify(tradeEnrichmentService, times(1)).enrichTradeData(any(), any());
     }
 
     @Test
     void givenEmptyFile_whenEnrichTradeData_thenReturnsBadRequest() throws Exception {
         // given
-        mockMvc = MockMvcBuilders.standaloneSetup(tradeEnrichmentController).build();
         final MockMultipartFile emptyFile = new MockMultipartFile("file", "empty.csv", "text/csv", new byte[0]);
 
         // when & then
         mockMvc.perform(multipart("/api/v1/enrich")
                         .file(emptyFile)
                         .contentType(MediaType.MULTIPART_FORM_DATA))
-                .andExpect(status().isBadRequest())
-                .andExpect(content().string(containsString("Please upload a file")));
+                .andExpect(status().isBadRequest());
+
+        verify(tradeEnrichmentService, never()).enrichTradeData(any(), any());
+    }
+
+    @Test
+    void givenNonCsvFile_whenEnrichTradeData_thenReturnsBadRequest() throws Exception {
+        // given
+        final MockMultipartFile nonCsvFile = new MockMultipartFile("file", "data.txt", "text/plain", "sample data".getBytes());
+
+        // when & then
+        mockMvc.perform(multipart("/api/v1/enrich")
+                        .file(nonCsvFile)
+                        .contentType(MediaType.MULTIPART_FORM_DATA))
+                .andExpect(status().isBadRequest());
+
+        verify(tradeEnrichmentService, never()).enrichTradeData(any(), any());
     }
 }

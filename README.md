@@ -1,13 +1,12 @@
-See the [TASK](./TASK.md) file for instructions.
-
 # Trade Enrichment Service Documentation
 
 ## Table of Contents
 1. [How to Run the Service](#how-to-run-the-service)
 2. [How to Use the API](#how-to-use-the-api)
-3. [Limitations of the Code](#limitations-of-the-code)
-4. [Design Discussion](#design-discussion)
-5. [Ideas for Improvement](#ideas-for-improvement)
+3. [Key Implementation Details](#key-implementation-details)
+4. [Limitations of the Code](#limitations-of-the-code)
+5. [Design Discussion](#design-discussion)
+6. [Ideas for Improvement](#ideas-for-improvement)
 
 ## How to Run the Service
 
@@ -56,46 +55,53 @@ The service exposes a single endpoint for enriching trade data:
 
 ### Response
 - **Success**: HTTP 200 OK
-    - Body: A list of enriched trade data strings
+    - Body: CSV file containing enriched trade data
 - **Error**: HTTP 4xx or 5xx
-    - Body: JSON object with error details
+    - Body: Error details
 
 ### Example using cURL
 ```bash
 curl -X POST -H "Content-Type: multipart/form-data" \
      -F "file=@/path/to/your/trades.csv" \
+     -o enriched_trades.csv \
      http://localhost:8080/api/v1/enrich
 ```
 
+## Key Implementation Details
+
+1. **Streaming Response**: The service now uses an `OutputStream` to write the enriched trade data directly to the response, improving memory efficiency for large datasets.
+
+2. **Parallel Processing**: The service uses a `ForkJoinPool` to process trades in parallel, enhancing performance for large datasets.
+
+3. **Date Validation Caching**: A `Map` is used as a cache to store validated dates, improving performance by avoiding repeated date parsing for common dates.
+
+4. **Error Handling**: The service includes error handling for various scenarios, including invalid input files and processing errors.
+
 ## Limitations of the Code
 
-1. **Memory Usage**: The current implementation loads all product data into memory. This may not be suitable for extremely large product datasets.
+1. **Memory Usage**: While the streaming response reduces memory usage, the product data is still loaded into memory. This may not be suitable for extremely large product datasets.
 
 2. **Error Handling**: While basic error handling is implemented, it may not cover all possible edge cases or provide detailed error messages for all scenarios.
 
-3. **Performance**: The service processes trades in batches, which helps with large datasets. However, for very large files (hundreds of millions of trades), it may still face performance issues.
+3. **Date Format**: The service assumes a specific date format (yyyyMMdd). It may not handle other date formats correctly.
 
-4. **Date Format**: The service assumes a specific date format (yyyyMMdd). It may not handle other date formats correctly.
+4. **File Format**: The service assumes a specific CSV format. It may not handle different delimiters or file formats.
 
-5. **File Format**: The service assumes a specific CSV format. It may not handle different delimiters or file formats.
-
-6. **Scalability**: The service is designed to run on a single instance. It doesn't support distributed processing out of the box.
+5. **Scalability**: While the service uses parallel processing, it's designed to run on a single instance. It doesn't support distributed processing out of the box.
 
 ## Design Discussion
 
 1. **Spring Boot**: We chose Spring Boot for its ease of use, built-in features, and wide adoption in the Java ecosystem.
 
-2. **Multithreading**: The service uses a thread pool to process trades in parallel, which helps improve performance for large datasets.
+2. **Streaming Response**: By writing directly to the `OutputStream`, we avoid holding the entire dataset in memory, allowing for processing of larger files.
 
-3. **Batch Processing**: Trades are processed in batches to manage memory usage and improve efficiency.
+3. **Parallel Processing**: The use of `ForkJoinPool` allows for efficient parallel processing of trade data, improving performance for large datasets.
 
 4. **In-Memory Product Data**: Product data is loaded into memory for fast lookups. This trades off memory usage for performance.
 
-5. **CSV Parsing**: We use Apache Commons CSV library for parsing CSV data. This provides robust handling of various CSV formats and edge cases, while still maintaining good performance.
+5. **Date Validation Caching**: By caching validated dates, we reduce the overhead of repeated date parsing, which can significantly improve performance for datasets with many repeated dates.
 
-6. **Error Handling**: We use Spring's exception handling capabilities to provide consistent error responses.
-
-7. **File Upload**: We leverage Spring's multipart file upload support for handling the trade data file.
+6. **CSV Parsing**: We use Apache Commons CSV library for parsing CSV data, providing robust handling of various CSV formats and edge cases.
 
 ## Ideas for Improvement
 
@@ -103,22 +109,18 @@ curl -X POST -H "Content-Type: multipart/form-data" \
 
 2. **Distributed Processing**: Implement a distributed processing system (e.g., Apache Spark) to handle extremely large trade datasets.
 
-3. **Caching**: Implement caching for frequently accessed product data to improve performance.
+3. **API Versioning**: Implement proper API versioning to ensure backward compatibility as the service evolves.
 
-4. **Asynchronous Processing**: For large files, implement an asynchronous processing model where the API returns immediately and provides a job ID for checking the status.
+4. **Comprehensive Logging**: Implement more detailed logging for better monitoring and debugging.
 
-5. **API Versioning**: Implement proper API versioning to ensure backward compatibility as the service evolves.
+5. **Metrics and Monitoring**: Add metrics collection (e.g., using Micrometer) for monitoring performance and health of the service.
 
-6. **Comprehensive Logging**: Implement more detailed logging for better monitoring and debugging.
+6. **Input Validation**: Implement more robust input validation, possibly using a validation framework like Hibernate Validator.
 
-7. **Metrics and Monitoring**: Add metrics collection (e.g., using Micrometer) for monitoring performance and health of the service.
+7. **Security**: Implement authentication and authorization for the API endpoints.
 
-8. **Input Validation**: Implement more robust input validation, possibly using a validation framework like Hibernate Validator.
+8. **Containerization**: Dockerize the application for easier deployment and scaling.
 
-9. **Security**: Implement authentication and authorization for the API endpoints.
+9. **Configuration Management**: Use external configuration management (e.g., Spring Cloud Config) for easier management of properties across environments.
 
-10. **Containerization**: Dockerize the application for easier deployment and scaling.
-
-11. **Configuration Management**: Use external configuration management (e.g., Spring Cloud Config) for easier management of properties across environments.
-
-By addressing these improvements, the Trade Enrichment Service could be made more robust, scalable, and production-ready.
+10. **Date Format Flexibility**: Implement support for multiple date formats or allow date format to be specified as a parameter.

@@ -2,9 +2,9 @@ package com.verygoodbank.tes.service;
 
 import org.springframework.web.multipart.MultipartFile;
 
-import java.util.List;
+import java.io.OutputStream;
 
 public interface TradeEnrichmentService {
 
-    List<String> enrichTradeData(MultipartFile file);
+    void enrichTradeData(MultipartFile file, OutputStream outputStream);
 }

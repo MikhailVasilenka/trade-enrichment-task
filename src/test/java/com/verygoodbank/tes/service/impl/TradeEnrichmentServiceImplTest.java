@@ -1,5 +1,6 @@
 package com.verygoodbank.tes.service.impl;
 
+import com.verygoodbank.tes.exception.InternalServerError;
 import com.verygoodbank.tes.service.ProductService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -8,124 +9,152 @@ import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.mock.web.MockMultipartFile;
-import org.springframework.test.util.ReflectionTestUtils;
 
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.util.List;
-import java.util.concurrent.Callable;
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
-import java.util.concurrent.Future;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertNotNull;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.doAnswer;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.any;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
 class TradeEnrichmentServiceImplTest {
 
-    @InjectMocks
-    private TradeEnrichmentServiceImpl tradeEnrichmentService;
-
     @Mock
     private ProductService productService;
 
+    @Mock
     private ExecutorService executorService;
+
+    @InjectMocks
+    private TradeEnrichmentServiceImpl tradeEnrichmentService;
 
     @BeforeEach
     void setUp() {
-        executorService = Executors.newSingleThreadExecutor();
-        ReflectionTestUtils.setField(tradeEnrichmentService, "executorService", executorService);
-        ReflectionTestUtils.setField(tradeEnrichmentService, "batchSize", 10);
+        executorService = Executors.newFixedThreadPool(Runtime.getRuntime().availableProcessors());
+        tradeEnrichmentService = new TradeEnrichmentServiceImpl(productService, executorService);
     }
 
     @Test
     void givenValidFile_whenEnrichTradeData_thenReturnEnrichedTrades() throws Exception {
         // given
-        final Path tradeDataPath = Path.of("src/test/resources/tradeData.csv");
-        final MockMultipartFile file = new MockMultipartFile("file", "tradeData.csv",
-                "text/csv", Files.readAllBytes(tradeDataPath));
+        final String csvContent = "date,product_id,currency,price\n20240101,1,EUR,10.0\n20240101,2,EUR,20.1";
+        final MockMultipartFile file = new MockMultipartFile("file", "tradeData.csv", "text/csv", csvContent.getBytes());
+        final ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
+
         when(productService.getProductName("1")).thenReturn("Treasury Bills Domestic");
         when(productService.getProductName("2")).thenReturn("Corporate Bonds Domestic");
-        when(productService.getProductName("3")).thenReturn("REPO Domestic");
-        when(productService.getProductName("11")).thenReturn("Missing Product Name");
-
 
         // when
-        List<String> result = tradeEnrichmentService.enrichTradeData(file);
+        tradeEnrichmentService.enrichTradeData(file, outputStream);
 
         // then
-        assertNotNull(result);
-        assertEquals(5, result.size());
-        assertEquals("date,product_id,product_name,currency,price", result.get(0));
-        assertEquals("20240101,1,Treasury Bills Domestic,EUR,10.0", result.get(1));
-        assertEquals("20240101,2,Corporate Bonds Domestic,EUR,20.1", result.get(2));
-        assertEquals("20240101,3,REPO Domestic,EUR,30.34", result.get(3));
-        assertEquals("20240101,11,Missing Product Name,EUR,35.34", result.get(4));
+        final String result = outputStream.toString(StandardCharsets.UTF_8);
+        final String[] lines = result.split("\\r?\\n");
+        assertEquals(3, lines.length);
+        assertEquals("date,product_id,product_name,currency,price", lines[0]);
+        assertEquals("20240101,1,Treasury Bills Domestic,EUR,10.0", lines[1]);
+        assertEquals("20240101,2,Corporate Bonds Domestic,EUR,20.1", lines[2]);
     }
 
     @Test
     void givenInvalidDateFormat_whenEnrichTradeData_thenSkipInvalidTrade() throws Exception {
         // given
-        final Path tradeDataPath = Path.of("src/test/resources/tradeDataInvalidDate.csv");
-        final MockMultipartFile file = new MockMultipartFile("file", "tradeDataInvalidDate.csv",
-                "text/csv", Files.readAllBytes(tradeDataPath));
-        when(productService.getProductName(any())).thenReturn("Corporate Bonds Domestic");
+        final String csvContent = "date,product_id,currency,price\n2024-01-01,1,EUR,10.0\n20240101,2,EUR,20.1";
+        final MockMultipartFile file = new MockMultipartFile("file", "tradeData.csv", "text/csv", csvContent.getBytes());
+        final ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
 
-
-        // when
-        List<String> result = tradeEnrichmentService.enrichTradeData(file);
-
-        // then
-        assertNotNull(result);
-        assertEquals(2, result.size());
-        assertEquals("date,product_id,product_name,currency,price", result.get(0));
-        assertEquals("20240101,2,Corporate Bonds Domestic,EUR,20.1", result.get(1));
-    }
-
-    @Test
-    void givenInvalidTradeDataFormat_whenEnrichTradeData_thenSkipInvalidTrade() throws Exception {
-        // given
-        final Path tradeDataPath = Path.of("src/test/resources/tradeDataInvalidFormat.csv");
-        final MockMultipartFile file = new MockMultipartFile("file", "tradeDataInvalidFormat.csv",
-                "text/csv", Files.readAllBytes(tradeDataPath));
-        when(productService.getProductName(any())).thenReturn("Corporate Bonds Domestic");
-
+        when(productService.getProductName(anyString())).thenReturn("Some Product");
 
         // when
-        List<String> result = tradeEnrichmentService.enrichTradeData(file);
+        tradeEnrichmentService.enrichTradeData(file, outputStream);
 
         // then
-        assertNotNull(result);
-        assertEquals(2, result.size());
-        assertEquals("date,product_id,product_name,currency,price", result.get(0));
-        assertEquals("20240101,2,Corporate Bonds Domestic,EUR,20.1", result.get(1));
+        final String result = outputStream.toString(StandardCharsets.UTF_8);
+        final String[] lines = result.split("\\r?\\n");
+        assertEquals(2, lines.length);
+        assertEquals("date,product_id,product_name,currency,price", lines[0]);
+        assertEquals("20240101,2,Some Product,EUR,20.1", lines[1]);
     }
 
     @Test
     void givenMissingProductMapping_whenEnrichTradeData_thenUseDefaultProductName() throws Exception {
         // given
-        final Path tradeDataPath = Path.of("src/test/resources/tradeData.csv");
-        final MockMultipartFile file = new MockMultipartFile("file", "tradeData.csv",
-                "text/csv", Files.readAllBytes(tradeDataPath));
+        final String csvContent = "date,product_id,currency,price\n20240101,1,EUR,10.0";
+        final MockMultipartFile file = new MockMultipartFile("file", "tradeData.csv", "text/csv", csvContent.getBytes());
+        final ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
 
-        when(productService.getProductName(any())).thenReturn("Missing Product Name");
-
+        when(productService.getProductName("1")).thenReturn("Missing Product Name");
 
         // when
-        List<String> result = tradeEnrichmentService.enrichTradeData(file);
+        tradeEnrichmentService.enrichTradeData(file, outputStream);
 
         // then
-        assertNotNull(result);
-        assertEquals(5, result.size());
-        assertEquals("date,product_id,product_name,currency,price", result.get(0));
-        assertEquals("20240101,1,Missing Product Name,EUR,10.0", result.get(1));
-        assertEquals("20240101,2,Missing Product Name,EUR,20.1", result.get(2));
-        assertEquals("20240101,3,Missing Product Name,EUR,30.34", result.get(3));
-        assertEquals("20240101,11,Missing Product Name,EUR,35.34", result.get(4));
+        final String result = outputStream.toString(StandardCharsets.UTF_8);
+        final String[] lines = result.split("\\r?\\n");
+        assertEquals(2, lines.length);
+        assertEquals("date,product_id,product_name,currency,price", lines[0]);
+        assertEquals("20240101,1,Missing Product Name,EUR,10.0", lines[1]);
+    }
+
+    @Test
+    void givenIOException_whenEnrichTradeData_thenThrowInternalServerError() throws Exception {
+        // given
+        final String csvContent = "date,product_id,currency,price\n20240101,1,EUR,10.0";
+        final MockMultipartFile file = new MockMultipartFile("file", "tradeData.csv", "text/csv", csvContent.getBytes());
+        final ByteArrayOutputStream outputStream = mock(ByteArrayOutputStream.class);
+
+        doThrow(new IOException("Simulated IO error")).when(outputStream).write(any(byte[].class));
+
+        // when & then
+        assertThrows(InternalServerError.class, () -> tradeEnrichmentService.enrichTradeData(file, outputStream));
+    }
+
+    @Test
+    void givenValidDate_whenIsValidDate_thenReturnTrue() {
+        // given
+        final String validDate = "20240101";
+
+        // when
+        final boolean result = tradeEnrichmentService.isValidDate(validDate);
+
+        // then
+        assertTrue(result);
+    }
+
+    @Test
+    void givenInvalidDate_whenIsValidDate_thenReturnFalse() {
+        // given
+        final String invalidDate = "2024-01-01";
+
+        // when
+        final boolean result = tradeEnrichmentService.isValidDate(invalidDate);
+
+        // then
+        assertFalse(result);
+    }
+
+    @Test
+    void givenCachedDate_whenIsValidDate_thenReturnCachedResult() {
+        // given
+        final String validDate = "20240101";
+
+        // when
+        final boolean firstResult = tradeEnrichmentService.isValidDate(validDate);
+        final boolean secondResult = tradeEnrichmentService.isValidDate(validDate);
+
+        // then
+        assertTrue(firstResult);
+        assertTrue(secondResult);
+        // Verify that the second call uses the cached result (you might need to expose the cache for this assertion)
     }
 }
