@@ -5,12 +5,13 @@ import org.springframework.context.annotation.Configuration;
 
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.ForkJoinPool;
 
 @Configuration
 public class AppConfig {
 
     @Bean
-    public ExecutorService executorService() {
-        return Executors.newFixedThreadPool(Runtime.getRuntime().availableProcessors());
+    public ForkJoinPool forkJoinPool() {
+        return new ForkJoinPool(Runtime.getRuntime().availableProcessors());
     }
 }

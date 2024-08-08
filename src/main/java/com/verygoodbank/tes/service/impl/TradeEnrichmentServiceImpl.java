@@ -41,7 +41,7 @@ import static com.verygoodbank.tes.util.TradeCsvUtils.TRADE_CSV_FORMAT;
 public class TradeEnrichmentServiceImpl implements TradeEnrichmentService {
 
     private final ProductService productService;
-    private final ExecutorService executorService;
+    private final ForkJoinPool forkJoinPool;
 
     private static final DateTimeFormatter DATE_FORMATTER = DateTimeFormatter.ofPattern("yyyyMMdd");
     private final Map<String, Boolean> dateCache = new HashMap<>();
@@ -55,13 +55,12 @@ public class TradeEnrichmentServiceImpl implements TradeEnrichmentService {
             writer.write(getResponseHeader());
             writer.newLine();
 
-            ForkJoinPool customThreadPool = new ForkJoinPool(Runtime.getRuntime().availableProcessors());
-            customThreadPool.submit(() ->
+            forkJoinPool.submit(() ->
                     csvParser.stream()
                             .parallel()
                             .map(this::enrichTradeLine)
                             .filter(Objects::nonNull)
-                            .forEachOrdered(line -> {
+                            .forEach(line -> {
                                 try {
                                     writer.write(line);
                                     writer.newLine();
