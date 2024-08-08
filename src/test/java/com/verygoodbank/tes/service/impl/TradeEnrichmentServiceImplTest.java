@@ -15,6 +15,7 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.ForkJoinPool;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -33,15 +34,15 @@ class TradeEnrichmentServiceImplTest {
     private ProductService productService;
 
     @Mock
-    private ExecutorService executorService;
+    private ForkJoinPool forkJoinPool;
 
     @InjectMocks
     private TradeEnrichmentServiceImpl tradeEnrichmentService;
 
     @BeforeEach
     void setUp() {
-        executorService = Executors.newFixedThreadPool(Runtime.getRuntime().availableProcessors());
-        tradeEnrichmentService = new TradeEnrichmentServiceImpl(productService, executorService);
+        forkJoinPool = new ForkJoinPool(Runtime.getRuntime().availableProcessors());
+        tradeEnrichmentService = new TradeEnrichmentServiceImpl(productService, forkJoinPool);
     }
 
     @Test
